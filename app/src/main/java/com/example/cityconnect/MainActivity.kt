@@ -1,9 +1,18 @@
 package com.example.cityconnect
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -33,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -43,7 +53,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.navigation.NavController
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -51,10 +64,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import coil.compose.rememberAsyncImagePainter
 import com.example.cityconnect.ui.theme.CityConnectTheme
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
-
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.ktx.toObject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
 
 // Government color scheme for professional appearance
 object GovColors {
@@ -68,6 +88,19 @@ object GovColors {
     val Warning = Color(0xFFED6C02)
     val Error = Color(0xFFD32F2F)
 }
+
+data class Report(
+    val id: String = "",
+    val userId: String = "",
+    val userName: String = "",
+    val category: String = "",
+    val description: String = "",
+    val location: String = "",
+    val timestamp: Timestamp = Timestamp.now(),
+    val status: String = "",
+    val imageData: String = ""
+)
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -149,14 +182,14 @@ fun BottomNavigationBar(navController: NavHostController) {
                     },
                     selected = currentRoute == item.route,
                     onClick = {
-                        navController.navigate(item.route) {
-                            navController.graph.startDestinationRoute?.let { route ->
-                                popUpTo(route) {
+                        if (currentRoute != item.route) {
+                            navController.navigate(item.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
                                 }
+                                launchSingleTop = true
+                                restoreState = true
                             }
-                            launchSingleTop = true
-                            restoreState = true
                         }
                     },
                     colors = NavigationBarItemDefaults.colors(
@@ -181,9 +214,42 @@ sealed class NavigationItem(var route: String, var icon: ImageVector, var title:
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(navController: NavController) {
-    val currentUser = FirebaseAuth.getInstance().currentUser
+    val auth = FirebaseAuth.getInstance()
+    val db = FirebaseFirestore.getInstance()
+    val currentUser = auth.currentUser
+
     val displayName = currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Citizen"
     val displayInitial = displayName.firstOrNull()?.uppercaseChar()?.toString() ?: "C"
+
+    val citizenId = remember(currentUser) {
+        currentUser?.uid?.let { uid ->
+            "CZ-${uid.takeLast(6).uppercase()}"
+        } ?: "CZ-..."
+    }
+
+    var openReportsCount by remember { mutableStateOf(0) }
+    var recentlyUpdatedCount by remember { mutableStateOf(0) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(key1 = currentUser) {
+        if (currentUser != null) {
+            isLoading = true
+            db.collection("reports")
+                .whereEqualTo("userId", currentUser.uid)
+                .get()
+                .addOnSuccessListener { documents ->
+                    val reports = documents.toObjects(Report::class.java)
+                    openReportsCount = reports.count { it.status != "Resolved" }
+                    recentlyUpdatedCount = reports.count { it.status == "In Progress" || it.status == "Acknowledged" }
+                    isLoading = false
+                }
+                .addOnFailureListener {
+                    isLoading = false
+                }
+        } else {
+            isLoading = false
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -201,7 +267,7 @@ fun HomeScreen(navController: NavController) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                "CityConnect",
+                                "Kriyaté",
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = GovColors.White,
@@ -279,7 +345,7 @@ fun HomeScreen(navController: NavController) {
                             color = GovColors.NavyBlue
                         )
                         Text(
-                            "Citizen ID: CZ-2025-001",
+                            "Citizen ID: $citizenId",
                             style = MaterialTheme.typography.bodyMedium,
                             color = GovColors.DarkGray,
                             fontWeight = FontWeight.Medium
@@ -381,8 +447,8 @@ fun HomeScreen(navController: NavController) {
             ReportSummaryItem(
                 icon = Icons.Default.DateRange,
                 title = "Open Reports",
-                subtitle = "3 reports pending review",
-                count = "3",
+                subtitle = "$openReportsCount reports pending review",
+                count = if (isLoading) ".." else openReportsCount.toString(),
                 color = GovColors.Warning
             ) {
                 navController.navigate("my_reports")
@@ -393,8 +459,8 @@ fun HomeScreen(navController: NavController) {
             ReportSummaryItem(
                 icon = Icons.Default.Refresh,
                 title = "Recently Updated",
-                subtitle = "2 reports with new updates",
-                count = "2",
+                subtitle = "$recentlyUpdatedCount reports with new updates",
+                count = if (isLoading) ".." else recentlyUpdatedCount.toString(),
                 color = GovColors.AccentBlue
             ) {
                 navController.navigate("my_reports")
@@ -481,46 +547,122 @@ fun ReportSummaryItem(
     }
 }
 
+fun createImageFile(context: Context): Uri {
+    val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+    val imageFileName = "JPEG_${timeStamp}_"
+    val storageDir: File? = context.cacheDir
+    val file = File.createTempFile(
+        imageFileName,
+        ".jpg",
+        storageDir
+    )
+    return FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.provider",
+        file
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewReportScreen(navController: NavController) {
-    var category by remember { mutableStateOf("") }
+    val reportCategories = listOf(
+        "Pothole / Road Damage", "Streetlight Outage", "Garbage / Illegal Dumping",
+        "Water Leakage / Supply Issue", "Blocked Drains / Sewage", "Fallen Trees / Debris",
+        "Broken Pavement / Sidewalk", "Public Property Vandalism", "Parking Violation",
+        "Stray Animal Issue", "Noise Complaint", "Other"
+    )
+
+    var selectedCategory by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var location by remember { mutableStateOf("") }
+    var isCategoryExpanded by remember { mutableStateOf(false) }
+    var imageUri by remember { mutableStateOf<Uri?>(null) }
+    var tempImageUri by remember { mutableStateOf<Uri?>(null) }
+    var showImageSourceDialog by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val db = FirebaseFirestore.getInstance()
+    val auth = FirebaseAuth.getInstance()
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+        onResult = { uri -> imageUri = uri }
+    )
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+        onResult = { success ->
+            if (success) {
+                imageUri = tempImageUri
+            }
+        }
+    )
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            if (isGranted) {
+                tempImageUri = createImageFile(context)
+                cameraLauncher.launch(tempImageUri)
+            } else {
+                Toast.makeText(context, "Camera permission is required.", Toast.LENGTH_LONG).show()
+            }
+        }
+    )
 
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                modifier = Modifier.fillMaxWidth().shadow(4.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
-                    title = {
-                        Text(
-                            "Submit New Report",
-                            color = GovColors.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
+                    title = { Text("Submit New Report", color = GovColors.White, fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         IconButton(onClick = { navController.popBackStack() }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = GovColors.White
-                            )
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = GovColors.White)
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent
-                    )
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         }
     ) { padding ->
+        if (showImageSourceDialog) {
+            AlertDialog(
+                onDismissRequest = { showImageSourceDialog = false },
+                title = { Text("Add Photo") },
+                text = { Text("Choose a source for your photo.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showImageSourceDialog = false
+                        when (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)) {
+                            PackageManager.PERMISSION_GRANTED -> {
+                                tempImageUri = createImageFile(context)
+                                cameraLauncher.launch(tempImageUri)
+                            }
+                            else -> cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    }) {
+                        Text("Camera")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showImageSourceDialog = false
+                        galleryLauncher.launch(
+                            androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }) {
+                        Text("Gallery")
+                    }
+                }
+            )
+        }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -531,54 +673,46 @@ fun NewReportScreen(navController: NavController) {
         ) {
             item {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .shadow(4.dp),
+                    modifier = Modifier.fillMaxWidth().shadow(4.dp),
                     shape = RoundedCornerShape(0.dp),
                     colors = CardDefaults.cardColors(containerColor = GovColors.White)
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
-                        Text(
-                            "Add Supporting Media",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = GovColors.NavyBlue
-                        )
+                        Text("Add Supporting Media", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                         Spacer(modifier = Modifier.height(12.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(150.dp)
-                                .background(
-                                    GovColors.LightGray,
-                                    RoundedCornerShape(0.dp)
-                                )
-                                .border(
-                                    2.dp,
-                                    GovColors.AccentBlue.copy(alpha = 0.3f),
-                                    RoundedCornerShape(0.dp)
-                                )
-                                .clickable { /* TODO: Handle image picking */ },
+                                .clip(RoundedCornerShape(0.dp))
+                                .background(GovColors.LightGray)
+                                .border(2.dp, GovColors.AccentBlue.copy(alpha = 0.3f), RoundedCornerShape(0.dp))
+                                .clickable { showImageSourceDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = "Upload",
-                                    tint = GovColors.AccentBlue,
-                                    modifier = Modifier.size(48.dp)
+                            if (imageUri != null) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(model = imageUri),
+                                    contentDescription = "Selected Image",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    "Upload Photos or Videos",
-                                    color = GovColors.DarkGray,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    "Max 10MB per file",
-                                    color = GovColors.DarkGray.copy(alpha = 0.7f),
-                                    fontSize = 12.sp
-                                )
+                                IconButton(
+                                    onClick = { imageUri = null },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(8.dp)
+                                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                ) {
+                                    Icon(Icons.Default.Close, "Remove Image", tint = Color.White)
+                                }
+                            } else {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Default.AddAPhoto, "Upload", tint = GovColors.AccentBlue, modifier = Modifier.size(48.dp))
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Add a Photo", color = GovColors.DarkGray, fontWeight = FontWeight.Medium)
+                                    Text("Camera or Gallery", color = GovColors.DarkGray.copy(alpha = 0.7f), fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -587,19 +721,12 @@ fun NewReportScreen(navController: NavController) {
 
             item {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .shadow(4.dp),
+                    modifier = Modifier.fillMaxWidth().shadow(4.dp),
                     shape = RoundedCornerShape(0.dp),
                     colors = CardDefaults.cardColors(containerColor = GovColors.White)
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
-                        Text(
-                            "Location Information",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = GovColors.NavyBlue
-                        )
+                        Text("Location Information", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
                             value = location,
@@ -614,13 +741,8 @@ fun NewReportScreen(navController: NavController) {
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(150.dp)
-                                .clip(RoundedCornerShape(0.dp))
-                                .background(GovColors.LightGray)
+                            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(0.dp)).background(GovColors.LightGray)
                         ) {
-                            // This would ideally be a real map component
                             Image(
                                 painter = painterResource(id = R.drawable.map),
                                 contentDescription = "Map Location",
@@ -634,40 +756,51 @@ fun NewReportScreen(navController: NavController) {
 
             item {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .shadow(4.dp),
+                    modifier = Modifier.fillMaxWidth().shadow(4.dp),
                     shape = RoundedCornerShape(0.dp),
                     colors = CardDefaults.cardColors(containerColor = GovColors.White)
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
-                        Text(
-                            "Issue Details",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = GovColors.NavyBlue
-                        )
+                        Text("Issue Details", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                         Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = category,
-                            onValueChange = { category = it },
-                            label = { Text("Category") },
-                            modifier = Modifier.fillMaxWidth(),
-                            trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = GovColors.AccentBlue,
-                                focusedLabelColor = GovColors.AccentBlue
-                            ),
-                            shape = RoundedCornerShape(0.dp)
-                        )
+                        ExposedDropdownMenuBox(
+                            expanded = isCategoryExpanded,
+                            onExpandedChange = { isCategoryExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = selectedCategory,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Category") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isCategoryExpanded) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = GovColors.AccentBlue,
+                                    focusedLabelColor = GovColors.AccentBlue
+                                ),
+                                modifier = Modifier.fillMaxWidth().menuAnchor(),
+                                shape = RoundedCornerShape(0.dp)
+                            )
+                            ExposedDropdownMenu(
+                                expanded = isCategoryExpanded,
+                                onDismissRequest = { isCategoryExpanded = false }
+                            ) {
+                                reportCategories.forEach { category ->
+                                    DropdownMenuItem(
+                                        text = { Text(category) },
+                                        onClick = {
+                                            selectedCategory = category
+                                            isCategoryExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
                             value = description,
                             onValueChange = { description = it },
                             label = { Text("Description") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp),
+                            modifier = Modifier.fillMaxWidth().height(120.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = GovColors.AccentBlue,
                                 focusedLabelColor = GovColors.AccentBlue
@@ -680,33 +813,97 @@ fun NewReportScreen(navController: NavController) {
 
             item {
                 Button(
-                    onClick = { navController.navigate("report_submitted") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .shadow(6.dp, RoundedCornerShape(0.dp)),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = GovColors.Success,
-                        contentColor = GovColors.White
-                    ),
+                    onClick = {
+                        if (selectedCategory.isBlank() || location.isBlank()) {
+                            Toast.makeText(context, "Please select a category and provide a location.", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        val user = auth.currentUser
+                        if (user == null) {
+                            Toast.makeText(context, "You must be logged in.", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+                        isLoading = true
+                        var imageDataString = ""
+                        if (imageUri != null) {
+                            try {
+                                val inputStream = context.contentResolver.openInputStream(imageUri!!)
+                                val bytes = inputStream?.readBytes()
+                                inputStream?.close()
+                                if (bytes != null) {
+                                    if (bytes.size > 1_000_000) { // 1MB Check
+                                        Toast.makeText(context, "Image is too large (Max 1MB).", Toast.LENGTH_LONG).show()
+                                        isLoading = false
+                                        return@Button
+                                    }
+                                    imageDataString = Base64.encodeToString(bytes, Base64.DEFAULT)
+                                }
+                            } catch (e: Exception) {
+                                Log.e("ImageConversion", "Error converting image to Base64", e)
+                                Toast.makeText(context, "Could not process image.", Toast.LENGTH_LONG).show()
+                                isLoading = false
+                                return@Button
+                            }
+                        }
+
+                        saveReportToFirestore(db, user.uid, user.displayName, selectedCategory, description, location, imageDataString, navController) { success ->
+                            isLoading = false
+                            if (!success) {
+                                Toast.makeText(context, "Failed to save report.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    enabled = !isLoading,
+                    modifier = Modifier.fillMaxWidth().height(56.dp).shadow(6.dp, RoundedCornerShape(0.dp)),
+                    colors = ButtonDefaults.buttonColors(containerColor = GovColors.Success, contentColor = GovColors.White),
                     shape = RoundedCornerShape(0.dp)
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        "Submit Report",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = GovColors.White, strokeWidth = 3.dp)
+                    } else {
+                        Icon(Icons.AutoMirrored.Filled.Send, null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Submit Report", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
+}
+
+fun saveReportToFirestore(
+    db: FirebaseFirestore,
+    userId: String,
+    userName: String?,
+    category: String,
+    description: String,
+    location: String,
+    imageData: String,
+    navController: NavController,
+    onComplete: (Boolean) -> Unit
+) {
+    val reportData = hashMapOf(
+        "userId" to userId,
+        "userName" to (userName ?: "Anonymous"),
+        "category" to category,
+        "description" to description,
+        "location" to location,
+        "timestamp" to Timestamp.now(),
+        "status" to "Submitted",
+        "imageData" to imageData
+    )
+    db.collection("reports")
+        .add(reportData)
+        .addOnSuccessListener {
+            Log.d("Firestore", "Report added with ID: ${it.id}")
+            navController.navigate("report_submitted")
+            onComplete(true)
+        }
+        .addOnFailureListener { e ->
+            Log.w("Firestore", "Error adding report", e)
+            onComplete(false)
+        }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -715,40 +912,24 @@ fun ReportSubmittedScreen(navController: NavController) {
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                modifier = Modifier.fillMaxWidth().shadow(4.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
-                    title = {
-                        Text(
-                            "Report Submitted",
-                            color = GovColors.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent
-                    )
+                    title = { Text("Report Submitted", color = GovColors.White, fontWeight = FontWeight.Bold) },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(GovColors.LightGray)
-                .padding(padding)
-                .padding(16.dp),
+            modifier = Modifier.fillMaxSize().background(GovColors.LightGray).padding(padding).padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(8.dp),
+                modifier = Modifier.fillMaxWidth().shadow(8.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.White)
             ) {
@@ -757,55 +938,23 @@ fun ReportSubmittedScreen(navController: NavController) {
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Box(
-                        modifier = Modifier
-                            .size(80.dp)
-                            .background(
-                                GovColors.Success.copy(alpha = 0.1f),
-                                CircleShape
-                            ),
+                        modifier = Modifier.size(80.dp).background(GovColors.Success.copy(alpha = 0.1f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = "Success",
-                            tint = GovColors.Success,
-                            modifier = Modifier.size(48.dp)
-                        )
+                        Icon(Icons.Default.CheckCircle, "Success", tint = GovColors.Success, modifier = Modifier.size(48.dp))
                     }
                     Spacer(modifier = Modifier.height(24.dp))
-                    Text(
-                        "Report Submitted Successfully",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = GovColors.NavyBlue,
-                        textAlign = TextAlign.Center
-                    )
+                    Text("Report Submitted Successfully", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue, textAlign = TextAlign.Center)
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        "Your report has been received and assigned tracking ID #RPT-2025-001. You will receive updates on its progress.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = GovColors.DarkGray,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 20.sp
-                    )
+                    Text("Your report has been received and assigned a tracking ID. You will receive updates on its progress.", style = MaterialTheme.typography.bodyMedium, color = GovColors.DarkGray, textAlign = TextAlign.Center, lineHeight = 20.sp)
                     Spacer(modifier = Modifier.height(24.dp))
                     Button(
-                        onClick = { navController.navigate("home") {
-                            popUpTo("home") { inclusive = true }
-                        } },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = GovColors.NavyBlue,
-                            contentColor = GovColors.White
-                        ),
+                        onClick = { navController.navigate("home") { popUpTo("home") { inclusive = true } } },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GovColors.NavyBlue, contentColor = GovColors.White),
                         shape = RoundedCornerShape(0.dp)
                     ) {
-                        Text(
-                            "Return to Home",
-                            fontWeight = FontWeight.Bold
-                        )
+                        Text("Return to Home", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -813,93 +962,67 @@ fun ReportSubmittedScreen(navController: NavController) {
     }
 }
 
-data class Report(
-    val title: String,
-    val id: String,
-    val status: String,
-    val imageResId: Int,
-    val location: String,
-    val category: String,
-    val description: String
-)
-
-val dummyReports = listOf(
-    Report(
-        title = "Pothole on Benras Road, Howrah",
-        id = "20240728-001",
-        status = "Resolved",
-        imageResId = R.drawable.pothole,
-        location = "Benras Road, Howrah",
-        category = "Road Issue",
-        description = "There is a deep pothole on Benras Road causing inconvenience to commuters."
-    ),
-    Report(
-        title = "Streetlight Outage, Dhankal",
-        id = "20240725-003",
-        status = "In Progress",
-        imageResId = R.drawable.streetlight,
-        location = "Dhankal",
-        category = "Electrical Issue",
-        description = "The main streetlight in the Dhankal area has been out for three days."
-    ),
-    Report(
-        title = "Graffiti on Public Building, Ahiritola",
-        id = "20240724-002",
-        status = "Acknowledged",
-        imageResId = R.drawable.graffiti,
-        location = "Ahiritola",
-        category = "Vandalism",
-        description = "New graffiti has appeared on the wall of the public library in Ahiritola."
-    ),
-    Report(
-        title = "Illegal Dumping, Bali, Howrah",
-        id = "20240723-001",
-        status = "Submitted",
-        imageResId = R.drawable.dumping,
-        location = "Bali, Howrah",
-        category = "Waste Management",
-        description = "Construction debris and household waste have been illegally dumped near the canal."
-    ),
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyReportsScreen(navController: NavController) {
+    var reportsList by remember { mutableStateOf<List<Report>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    val auth = FirebaseAuth.getInstance()
+    val db = FirebaseFirestore.getInstance()
+
+    LaunchedEffect(key1 = auth.currentUser) {
+        val user = auth.currentUser
+        if (user != null) {
+            db.collection("reports")
+                .whereEqualTo("userId", user.uid)
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .get()
+                .addOnSuccessListener { result ->
+                    reportsList = result.documents.mapNotNull { doc ->
+                        doc.toObject<Report>()?.copy(id = doc.id)
+                    }
+                    isLoading = false
+                }
+                .addOnFailureListener { exception ->
+                    Log.e("MyReportsScreen", "Firestore failure: ", exception)
+                    isLoading = false
+                }
+        } else {
+            isLoading = false
+        }
+    }
+
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                modifier = Modifier.fillMaxWidth().shadow(4.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
-                    title = {
-                        Text(
-                            "My Reports",
-                            color = GovColors.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent
-                    )
+                    title = { Text("My Reports", color = GovColors.White, fontWeight = FontWeight.Bold) },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(GovColors.LightGray)
-                .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        Box(
+            modifier = Modifier.fillMaxSize().background(GovColors.LightGray).padding(padding)
         ) {
-            items(dummyReports) { report ->
-                ReportItem(report) {
-                    navController.navigate("report_details/${report.id}")
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            } else if (reportsList.isEmpty()) {
+                Text("You have not submitted any reports yet.", modifier = Modifier.align(Alignment.Center).padding(16.dp), color = GovColors.DarkGray, textAlign = TextAlign.Center)
+            } else {
+                LazyColumn(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(reportsList) { report ->
+                        ReportItem(report) {
+                            navController.navigate("report_details/${report.id}")
+                        }
+                    }
                 }
             }
         }
@@ -909,10 +1032,7 @@ fun MyReportsScreen(navController: NavController) {
 @Composable
 fun ReportItem(report: Report, onClick: () -> Unit) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .shadow(4.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).shadow(4.dp),
         shape = RoundedCornerShape(0.dp),
         colors = CardDefaults.cardColors(containerColor = GovColors.White)
     ) {
@@ -923,18 +1043,9 @@ fun ReportItem(report: Report, onClick: () -> Unit) {
                 verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        report.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = GovColors.NavyBlue
-                    )
+                    Text(report.location, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        report.category,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = GovColors.DarkGray
-                    )
+                    Text(report.category, style = MaterialTheme.typography.bodyMedium, color = GovColors.DarkGray)
                 }
                 StatusChip(report.status)
             }
@@ -951,183 +1062,175 @@ fun StatusChip(status: String) {
         "Resolved" -> GovColors.Success.copy(alpha = 0.1f) to GovColors.Success
         else -> GovColors.LightGray to GovColors.DarkGray
     }
-
     Card(
         colors = CardDefaults.cardColors(containerColor = backgroundColor),
         shape = RoundedCornerShape(0.dp)
     ) {
-        Text(
-            status,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            color = textColor,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-        )
+        Text(status, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportDetailsScreen(navController: NavController, reportId: String?) {
-    val report = dummyReports.find { it.id == reportId }
+    var report by remember { mutableStateOf<Report?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(key1 = reportId) {
+        if (reportId == null) {
+            isLoading = false
+            return@LaunchedEffect
+        }
+        val db = FirebaseFirestore.getInstance()
+        db.collection("reports").document(reportId)
+            .get()
+            .addOnSuccessListener { document ->
+                if (document != null && document.exists()) {
+                    report = document.toObject<Report>()?.copy(id = document.id)
+                }
+                isLoading = false
+            }
+            .addOnFailureListener {
+                isLoading = false
+            }
+    }
 
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                modifier = Modifier.fillMaxWidth().shadow(4.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
-                    title = {
-                        Text(
-                            "Report Details",
-                            color = GovColors.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
+                    title = { Text("Report Details", color = GovColors.White, fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         IconButton(onClick = { navController.popBackStack() }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = GovColors.White
-                            )
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = GovColors.White)
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent
-                    )
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         }
     ) { padding ->
-        if (report != null) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(GovColors.LightGray)
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Image(
-                    painter = painterResource(id = report.imageResId),
-                    contentDescription = "Report Image",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(250.dp),
-                    contentScale = ContentScale.Crop
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
+        Box(
+            modifier = Modifier.fillMaxSize().background(GovColors.LightGray).padding(padding)
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            } else if (report != null) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    modifier = Modifier.verticalScroll(rememberScrollState())
                 ) {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .shadow(4.dp),
-                        shape = RoundedCornerShape(0.dp),
-                        colors = CardDefaults.cardColors(containerColor = GovColors.White)
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    "Report #${report.id}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GovColors.NavyBlue
-                                )
-                                StatusChip(report.status)
+                    val bitmap = remember(report!!.imageData) {
+                        if (report!!.imageData.isNotBlank()) {
+                            try {
+                                val imageBytes = Base64.decode(report!!.imageData, Base64.DEFAULT)
+                                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                            } catch (e: Exception) {
+                                Log.e("ImageDecode", "Error decoding Base64 image", e)
+                                null
                             }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                report.title,
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = GovColors.NavyBlue
-                            )
+                        } else {
+                            null
                         }
                     }
 
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .shadow(4.dp),
-                        shape = RoundedCornerShape(0.dp),
-                        colors = CardDefaults.cardColors(containerColor = GovColors.White)
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Report Image",
+                            modifier = Modifier.fillMaxWidth().height(250.dp),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        PlaceholderImage()
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
-                            Text(
-                                "Details",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = GovColors.NavyBlue
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            DetailRow(Icons.Default.LocationOn, "Location", report.location)
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            DetailRow(Icons.AutoMirrored.Filled.List, "Category", report.category)
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            DetailRow(Icons.Default.Info, "Description", report.description)
+                        Card(
+                            modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                            shape = RoundedCornerShape(0.dp),
+                            colors = CardDefaults.cardColors(containerColor = GovColors.White)
+                        ) {
+                            Column(modifier = Modifier.padding(20.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Report #${report!!.id}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
+                                    StatusChip(report!!.status)
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(report!!.location, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
+                            }
+                        }
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                            shape = RoundedCornerShape(0.dp),
+                            colors = CardDefaults.cardColors(containerColor = GovColors.White)
+                        ) {
+                            Column(modifier = Modifier.padding(20.dp)) {
+                                Text("Details", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                DetailRow(Icons.Default.LocationOn, "Location", report!!.location)
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                                DetailRow(Icons.AutoMirrored.Filled.List, "Category", report!!.category)
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                                DetailRow(Icons.Default.Info, "Description", report!!.description)
+                            }
                         }
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        } else {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Report not found.")
+            } else {
+                Text("Report not found.", modifier = Modifier.align(Alignment.Center), color = GovColors.DarkGray)
             }
         }
+    }
+}
+
+@Composable
+fun PlaceholderImage() {
+    Box(
+        modifier = Modifier.fillMaxWidth().height(250.dp).background(GovColors.DarkGray.copy(alpha = 0.1f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Filled.ImageNotSupported,
+            contentDescription = "No Image Provided",
+            tint = GovColors.DarkGray.copy(alpha = 0.5f),
+            modifier = Modifier.size(80.dp)
+        )
     }
 }
 
 @Composable
 fun DetailRow(icon: ImageVector, label: String, value: String) {
     Row(verticalAlignment = Alignment.Top) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = GovColors.AccentBlue,
-            modifier = Modifier.padding(top = 2.dp)
-        )
+        Icon(icon, label, tint = GovColors.AccentBlue, modifier = Modifier.padding(top = 2.dp))
         Spacer(modifier = Modifier.width(16.dp))
         Column {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = GovColors.NavyBlue
-            )
-            Text(
-                value,
-                style = MaterialTheme.typography.bodyLarge,
-                color = GovColors.DarkGray
-            )
+            Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
+            Text(value, style = MaterialTheme.typography.bodyLarge, color = GovColors.DarkGray)
         }
     }
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(navController: NavController) {
     var currentUser by remember { mutableStateOf(FirebaseAuth.getInstance().currentUser) }
 
-    // This function will reload the user from Firebase to get the latest state
     val reloadUser: () -> Unit = {
-        currentUser = null // Force recomposition
+        currentUser = null
         FirebaseAuth.getInstance().currentUser?.reload()?.addOnCompleteListener {
             currentUser = FirebaseAuth.getInstance().currentUser
         }
@@ -1136,16 +1239,13 @@ fun ProfileScreen(navController: NavController) {
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                modifier = Modifier.fillMaxWidth().shadow(4.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
                     title = {
                         Text(
-                            // Dynamically change the title
                             when {
                                 currentUser == null -> "Citizen Login"
                                 !currentUser!!.isEmailVerified -> "Verify Your Email"
@@ -1156,23 +1256,15 @@ fun ProfileScreen(navController: NavController) {
                         )
                     },
                     navigationIcon = {},
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent
-                    )
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             if (currentUser == null) {
-                // --- STATE 1: Logged Out ---
-                AuthScreen(
-                    onLoginSuccess = {
-                        currentUser = FirebaseAuth.getInstance().currentUser
-                    }
-                )
+                AuthScreen(onLoginSuccess = { currentUser = FirebaseAuth.getInstance().currentUser })
             } else if (!currentUser!!.isEmailVerified) {
-                // --- STATE 2: Logged In, but Email NOT Verified ---
                 EmailVerificationScreen(
                     onRefresh = reloadUser,
                     onSignOut = {
@@ -1181,7 +1273,6 @@ fun ProfileScreen(navController: NavController) {
                     }
                 )
             } else {
-                // --- STATE 3: Logged In and Email Verified ---
                 LoggedInProfileContent(
                     navController = navController,
                     onSignOut = {
@@ -1200,43 +1291,23 @@ fun EmailVerificationScreen(onRefresh: () -> Unit, onSignOut: () -> Unit) {
     var isSending by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .background(GovColors.LightGray),
+        modifier = Modifier.fillMaxSize().padding(24.dp).background(GovColors.LightGray),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            Icons.Filled.MarkEmailRead,
-            contentDescription = "Email Not Verified",
-            modifier = Modifier.size(64.dp),
-            tint = GovColors.Warning
-        )
+        Icon(Icons.Filled.MarkEmailRead, "Email Not Verified", modifier = Modifier.size(64.dp), tint = GovColors.Warning)
         Spacer(modifier = Modifier.height(24.dp))
-        Text(
-            "Verification Required",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            color = GovColors.NavyBlue,
-            textAlign = TextAlign.Center
-        )
+        Text("Verification Required", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue, textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            "Your account is created, but you need to verify your email address before you can access your profile. Please check your inbox for the verification link.",
-            textAlign = TextAlign.Center,
-            color = GovColors.DarkGray
-        )
+        Text("Your account is created, but you need to verify your email address before you can access your profile. Please check your inbox for the verification link.", textAlign = TextAlign.Center, color = GovColors.DarkGray)
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
             onClick = onRefresh,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(0.dp)
         ) {
-            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+            Icon(Icons.Default.Refresh, "Refresh")
             Spacer(modifier = Modifier.width(8.dp))
             Text("I've Verified, Refresh Status", fontWeight = FontWeight.Bold)
         }
@@ -1257,9 +1328,7 @@ fun EmailVerificationScreen(onRefresh: () -> Unit, onSignOut: () -> Unit) {
                     }
             },
             enabled = !isSending,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(0.dp),
             border = BorderStroke(1.dp, GovColors.NavyBlue)
         ) {
@@ -1271,7 +1340,6 @@ fun EmailVerificationScreen(onRefresh: () -> Unit, onSignOut: () -> Unit) {
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-
         TextButton(onClick = onSignOut) {
             Text("Sign Out", color = GovColors.Error)
         }
@@ -1286,117 +1354,64 @@ fun LoggedInProfileContent(navController: NavController, onSignOut: () -> Unit) 
     val email = currentUser?.email ?: "No email provided"
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(GovColors.LightGray)
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(GovColors.LightGray).verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // --- Profile Header Card ---
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .shadow(4.dp),
+            modifier = Modifier.fillMaxWidth().shadow(4.dp),
             shape = RoundedCornerShape(0.dp),
             colors = CardDefaults.cardColors(containerColor = GovColors.White)
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(GovColors.NavyBlue, GovColors.AccentBlue)
-                            ),
-                            shape = CircleShape
-                        ),
+                    modifier = Modifier.size(80.dp).background(brush = Brush.linearGradient(colors = listOf(GovColors.NavyBlue, GovColors.AccentBlue)), shape = CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = name.firstOrNull()?.uppercase() ?: "C",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GovColors.White
-                    )
+                    Text(text = name.firstOrNull()?.uppercase() ?: "C", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = GovColors.White)
                 }
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = GovColors.NavyBlue
-                )
+                Text(text = name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = email,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = GovColors.DarkGray
-                )
+                Text(text = email, style = MaterialTheme.typography.bodyMedium, color = GovColors.DarkGray)
             }
         }
 
-        // --- Account Settings Card ---
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .shadow(4.dp),
+            modifier = Modifier.fillMaxWidth().shadow(4.dp),
             shape = RoundedCornerShape(0.dp),
             colors = CardDefaults.cardColors(containerColor = GovColors.White)
         ) {
             Column {
-                ProfileMenuItem(icon = Icons.Default.Person, text = "Edit Personal Information") {
-                    navController.navigate("edit_profile")
-                }
+                ProfileMenuItem(icon = Icons.Default.Person, text = "Edit Personal Information") { navController.navigate("edit_profile") }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                ProfileMenuItem(icon = Icons.Default.Notifications, text = "Notification Settings") {
-                    Toast.makeText(context, "Navigate to Notification Settings", Toast.LENGTH_SHORT).show()
-                }
+                ProfileMenuItem(icon = Icons.Default.Notifications, text = "Notification Settings") { Toast.makeText(context, "Nav to Notification Settings", Toast.LENGTH_SHORT).show() }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                ProfileMenuItem(icon = Icons.Default.Lock, text = "Change Password") {
-                    Toast.makeText(context, "Navigate to Change Password Screen", Toast.LENGTH_SHORT).show()
-                }
+                ProfileMenuItem(icon = Icons.Default.Lock, text = "Change Password") { Toast.makeText(context, "Nav to Change Password", Toast.LENGTH_SHORT).show() }
             }
         }
 
-        // --- More Information Card ---
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .shadow(4.dp),
+            modifier = Modifier.fillMaxWidth().shadow(4.dp),
             shape = RoundedCornerShape(0.dp),
             colors = CardDefaults.cardColors(containerColor = GovColors.White)
         ) {
             Column {
-                ProfileMenuItem(icon = Icons.AutoMirrored.Filled.Help, text = "Help & Support") {
-                    Toast.makeText(context, "Navigate to Help & Support", Toast.LENGTH_SHORT).show()
-                }
+                ProfileMenuItem(icon = Icons.AutoMirrored.Filled.Help, text = "Help & Support") { Toast.makeText(context, "Nav to Help & Support", Toast.LENGTH_SHORT).show() }
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                ProfileMenuItem(icon = Icons.Default.Shield, text = "Privacy Policy") {
-                    Toast.makeText(context, "Navigate to Privacy Policy", Toast.LENGTH_SHORT).show()
-                }
+                ProfileMenuItem(icon = Icons.Default.Shield, text = "Privacy Policy") { Toast.makeText(context, "Nav to Privacy Policy", Toast.LENGTH_SHORT).show() }
             }
         }
 
-        // --- Sign Out Button ---
         Button(
             onClick = onSignOut,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .padding(top = 8.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = GovColors.Error,
-                contentColor = GovColors.White
-            ),
+            modifier = Modifier.fillMaxWidth().height(48.dp).padding(top = 8.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = GovColors.Error, contentColor = GovColors.White),
             shape = RoundedCornerShape(0.dp)
         ) {
-            Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Sign Out")
+            Icon(Icons.AutoMirrored.Filled.ExitToApp, "Sign Out")
             Spacer(modifier = Modifier.width(8.dp))
             Text("Sign Out", fontWeight = FontWeight.Bold)
         }
@@ -1406,31 +1421,13 @@ fun LoggedInProfileContent(navController: NavController, onSignOut: () -> Unit) 
 @Composable
 fun ProfileMenuItem(icon: ImageVector, text: String, onClick: () -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 16.dp, horizontal = 20.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 16.dp, horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = text,
-            tint = GovColors.AccentBlue,
-            modifier = Modifier.size(24.dp)
-        )
+        Icon(icon, text, tint = GovColors.AccentBlue, modifier = Modifier.size(24.dp))
         Spacer(modifier = Modifier.width(20.dp))
-        Text(
-            text = text,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
-            color = GovColors.NavyBlue,
-            fontWeight = FontWeight.Medium
-        )
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = GovColors.DarkGray
-        )
+        Text(text = text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = GovColors.NavyBlue, fontWeight = FontWeight.Medium)
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = GovColors.DarkGray)
     }
 }
 
@@ -1442,101 +1439,47 @@ fun EditProfileScreen(navController: NavController) {
     val user = FirebaseAuth.getInstance().currentUser
 
     var displayName by remember { mutableStateOf(user?.displayName ?: "") }
-    var phoneNumber by remember { mutableStateOf("") } // You'd typically load this from a database like Firestore
+    var phoneNumber by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                modifier = Modifier.fillMaxWidth().shadow(4.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
-                    title = {
-                        Text(
-                            "Edit Information",
-                            color = GovColors.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
+                    title = { Text("Edit Information", color = GovColors.White, fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         IconButton(onClick = { navController.popBackStack() }) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = GovColors.White
-                            )
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = GovColors.White)
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent
-                    )
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(GovColors.LightGray)
-                .padding(padding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxSize().background(GovColors.LightGray).padding(padding).padding(16.dp).verticalScroll(rememberScrollState())
         ) {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                modifier = Modifier.fillMaxWidth().shadow(4.dp),
                 shape = RoundedCornerShape(0.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.White)
             ) {
                 Column(modifier = Modifier.padding(24.dp)) {
-                    Text(
-                        "Update Your Details",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = GovColors.NavyBlue
-                    )
+                    Text("Update Your Details", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    OutlinedTextField(
-                        value = displayName,
-                        onValueChange = { displayName = it },
-                        label = { Text("Full Name") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(0.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                        singleLine = true
-                    )
+                    OutlinedTextField(value = displayName, onValueChange = { displayName = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(0.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), singleLine = true)
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    OutlinedTextField(
-                        value = user?.email ?: "",
-                        onValueChange = { /* Email is read-only */ },
-                        label = { Text("Verified Email Address") },
-                        modifier = Modifier.fillMaxWidth(),
-                        readOnly = true,
-                        shape = RoundedCornerShape(0.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            disabledTextColor = GovColors.DarkGray,
-                            disabledBorderColor = GovColors.DarkGray.copy(alpha = 0.3f),
-                            disabledLabelColor = GovColors.DarkGray.copy(alpha = 0.7f)
-                        )
-                    )
+                    OutlinedTextField(value = user?.email ?: "", onValueChange = { /* Email is read-only */ }, label = { Text("Verified Email Address") }, modifier = Modifier.fillMaxWidth(), readOnly = true, shape = RoundedCornerShape(0.dp), colors = OutlinedTextFieldDefaults.colors(disabledTextColor = GovColors.DarkGray, disabledBorderColor = GovColors.DarkGray.copy(alpha = 0.3f), disabledLabelColor = GovColors.DarkGray.copy(alpha = 0.7f)))
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    OutlinedTextField(
-                        value = phoneNumber,
-                        onValueChange = { phoneNumber = it },
-                        label = { Text("Phone Number (Optional)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(0.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-                    )
-
+                    OutlinedTextField(value = phoneNumber, onValueChange = { phoneNumber = it }, label = { Text("Phone Number (Optional)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(0.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
                     Spacer(modifier = Modifier.height(24.dp))
                     Button(
                         onClick = {
@@ -1545,35 +1488,26 @@ fun EditProfileScreen(navController: NavController) {
                                 return@Button
                             }
                             isLoading = true
-                            val profileUpdates = UserProfileChangeRequest.Builder()
-                                .setDisplayName(displayName)
-                                .build()
-
-                            user?.updateProfile(profileUpdates)
-                                ?.addOnCompleteListener { task ->
-                                    isLoading = false
-                                    if (task.isSuccessful) {
-                                        Toast.makeText(context, "Profile updated successfully!", Toast.LENGTH_SHORT).show()
-                                        navController.popBackStack()
-                                    } else {
-                                        Toast.makeText(context, "Failed to update profile.", Toast.LENGTH_LONG).show()
-                                    }
+                            val profileUpdates = UserProfileChangeRequest.Builder().setDisplayName(displayName).build()
+                            user?.updateProfile(profileUpdates)?.addOnCompleteListener { task ->
+                                isLoading = false
+                                if (task.isSuccessful) {
+                                    Toast.makeText(context, "Profile updated successfully!", Toast.LENGTH_SHORT).show()
+                                    navController.popBackStack()
+                                } else {
+                                    Toast.makeText(context, "Failed to update profile.", Toast.LENGTH_LONG).show()
                                 }
+                            }
                         },
                         enabled = !isLoading,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = GovColors.Success,
-                            contentColor = GovColors.White
-                        ),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GovColors.Success, contentColor = GovColors.White),
                         shape = RoundedCornerShape(0.dp)
                     ) {
                         if (isLoading) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), color = GovColors.White)
                         } else {
-                            Icon(Icons.Default.Check, contentDescription = null)
+                            Icon(Icons.Default.Check, null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Save Changes", fontWeight = FontWeight.Bold)
                         }

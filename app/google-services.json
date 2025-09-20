@@ -33,43 +33,6 @@
           ]
         }
       }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:188186721767:android:a22ba85fbf8324cbf55142",
-        "android_client_info": {
-          "package_name": "com.example.cityconnectcom.example.cityconnect"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "188186721767-gpcndi8ba2sh2s3ht146vtr9ltei11k2.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.cityconnectcom.example.cityconnect",
-            "certificate_hash": "d4fa40686ad59b05290a55f44ff1cc2f7751a55a"
-          }
-        },
-        {
-          "client_id": "188186721767-ptehqaujv728k7isqiqdrqgobtd8cavs.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyAeVRZSg-lhr3wcncBP-togO_pMQR6mRhY"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "188186721767-ptehqaujv728k7isqiqdrqgobtd8cavs.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
     }
   ],
   "configuration_version": "1"

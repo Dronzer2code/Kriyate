@@ -11,7 +11,7 @@ pluginManagement {
         gradlePluginPortal()
     }
     plugins {
-        id("org.jetbrains.kotlin.plugin.compose") version "2.0.0" // Compose Compiler plugin for Kotlin 2.0
+        id("org.jetbrains.kotlin.plugin.compose") version "2.1.20" // Compose Compiler plugin for Kotlin 2.0
     }
 }
 dependencyResolutionManagement {
