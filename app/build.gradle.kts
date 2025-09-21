@@ -64,6 +64,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended") // Corrected this line
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("com.valentinilk.shimmer:compose-shimmer:1.2.0")
 
     // Firebase Bill of Materials (BOM) - Declare only once
     implementation(platform("com.google.firebase:firebase-bom:33.1.2"))

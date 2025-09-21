@@ -13,7 +13,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,7 +43,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -53,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.navigation.NavController
@@ -153,9 +157,9 @@ fun BottomNavigationBar(navController: NavHostController) {
 
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .shadow(8.dp),
+            .fillMaxWidth(),
         shape = RoundedCornerShape(0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         colors = CardDefaults.cardColors(containerColor = GovColors.White)
     ) {
         NavigationBar(
@@ -234,18 +238,23 @@ fun HomeScreen(navController: NavController) {
     LaunchedEffect(key1 = currentUser) {
         if (currentUser != null) {
             isLoading = true
-            db.collection("reports")
-                .whereEqualTo("userId", currentUser.uid)
-                .get()
-                .addOnSuccessListener { documents ->
-                    val reports = documents.toObjects(Report::class.java)
-                    openReportsCount = reports.count { it.status != "Resolved" }
-                    recentlyUpdatedCount = reports.count { it.status == "In Progress" || it.status == "Acknowledged" }
-                    isLoading = false
-                }
-                .addOnFailureListener {
-                    isLoading = false
-                }
+            try {
+                db.collection("reports")
+                    .whereEqualTo("userId", currentUser.uid)
+                    .get()
+                    .addOnSuccessListener { documents ->
+                        val reports = documents.toObjects(Report::class.java)
+                        openReportsCount = reports.count { it.status != "Resolved" }
+                        recentlyUpdatedCount = reports.count { it.status == "In Progress" || it.status == "Acknowledged" }
+                        isLoading = false
+                    }
+                    .addOnFailureListener {
+                        isLoading = false
+                    }
+            } catch(e: Exception) {
+                Log.e("HomeScreen", "Error fetching report counts", e)
+                isLoading = false
+            }
         } else {
             isLoading = false
         }
@@ -255,9 +264,9 @@ fun HomeScreen(navController: NavController) {
         topBar = {
             Card(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(4.dp),
+                    .fillMaxWidth(),
                 shape = RoundedCornerShape(0.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
@@ -306,12 +315,13 @@ fun HomeScreen(navController: NavController) {
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
+                .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow))
         ) {
             Card(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(6.dp),
-                shape = RoundedCornerShape(0.dp),
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.White)
             ) {
                 Row(
@@ -357,10 +367,10 @@ fun HomeScreen(navController: NavController) {
             Spacer(modifier = Modifier.height(24.dp))
 
             Card(
-                shape = RoundedCornerShape(0.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(8.dp),
+                    .fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.White)
             ) {
                 Box {
@@ -375,7 +385,7 @@ fun HomeScreen(navController: NavController) {
                                         GovColors.AccentBlue.copy(alpha = 0.9f)
                                     )
                                 ),
-                                shape = RoundedCornerShape(0.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                     )
                     Column(
@@ -414,9 +424,9 @@ fun HomeScreen(navController: NavController) {
                                 containerColor = GovColors.Gold,
                                 contentColor = GovColors.NavyBlue
                             ),
-                            shape = RoundedCornerShape(0.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
                             modifier = Modifier
-                                .shadow(4.dp, RoundedCornerShape(0.dp))
                                 .height(48.dp)
                         ) {
                             Icon(
@@ -481,9 +491,9 @@ fun ReportSummaryItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .shadow(4.dp),
-        shape = RoundedCornerShape(0.dp),
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(containerColor = GovColors.White)
     ) {
         Row(
@@ -495,7 +505,7 @@ fun ReportSummaryItem(
                     .size(48.dp)
                     .background(
                         color = color.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(0.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -615,8 +625,9 @@ fun NewReportScreen(navController: NavController) {
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(0.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
@@ -673,8 +684,9 @@ fun NewReportScreen(navController: NavController) {
         ) {
             item {
                 Card(
-                    modifier = Modifier.fillMaxWidth().shadow(4.dp),
-                    shape = RoundedCornerShape(0.dp),
+                    modifier = Modifier.fillMaxWidth().animateContentSize(),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                     colors = CardDefaults.cardColors(containerColor = GovColors.White)
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
@@ -684,9 +696,9 @@ fun NewReportScreen(navController: NavController) {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(150.dp)
-                                .clip(RoundedCornerShape(0.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(GovColors.LightGray)
-                                .border(2.dp, GovColors.AccentBlue.copy(alpha = 0.3f), RoundedCornerShape(0.dp))
+                                .border(2.dp, GovColors.AccentBlue.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
                                 .clickable { showImageSourceDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
@@ -721,8 +733,9 @@ fun NewReportScreen(navController: NavController) {
 
             item {
                 Card(
-                    modifier = Modifier.fillMaxWidth().shadow(4.dp),
-                    shape = RoundedCornerShape(0.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                     colors = CardDefaults.cardColors(containerColor = GovColors.White)
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
@@ -737,11 +750,11 @@ fun NewReportScreen(navController: NavController) {
                                 focusedBorderColor = GovColors.AccentBlue,
                                 focusedLabelColor = GovColors.AccentBlue
                             ),
-                            shape = RoundedCornerShape(0.dp)
+                            shape = RoundedCornerShape(12.dp)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Box(
-                            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(0.dp)).background(GovColors.LightGray)
+                            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(12.dp)).background(GovColors.LightGray)
                         ) {
                             Image(
                                 painter = painterResource(id = R.drawable.map),
@@ -756,8 +769,9 @@ fun NewReportScreen(navController: NavController) {
 
             item {
                 Card(
-                    modifier = Modifier.fillMaxWidth().shadow(4.dp),
-                    shape = RoundedCornerShape(0.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                     colors = CardDefaults.cardColors(containerColor = GovColors.White)
                 ) {
                     Column(modifier = Modifier.padding(20.dp)) {
@@ -778,7 +792,7 @@ fun NewReportScreen(navController: NavController) {
                                     focusedLabelColor = GovColors.AccentBlue
                                 ),
                                 modifier = Modifier.fillMaxWidth().menuAnchor(),
-                                shape = RoundedCornerShape(0.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
                             ExposedDropdownMenu(
                                 expanded = isCategoryExpanded,
@@ -805,7 +819,7 @@ fun NewReportScreen(navController: NavController) {
                                 focusedBorderColor = GovColors.AccentBlue,
                                 focusedLabelColor = GovColors.AccentBlue
                             ),
-                            shape = RoundedCornerShape(0.dp)
+                            shape = RoundedCornerShape(12.dp)
                         )
                     }
                 }
@@ -854,9 +868,10 @@ fun NewReportScreen(navController: NavController) {
                         }
                     },
                     enabled = !isLoading,
-                    modifier = Modifier.fillMaxWidth().height(56.dp).shadow(6.dp, RoundedCornerShape(0.dp)),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = GovColors.Success, contentColor = GovColors.White),
-                    shape = RoundedCornerShape(0.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     if (isLoading) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), color = GovColors.White, strokeWidth = 3.dp)
@@ -912,8 +927,9 @@ fun ReportSubmittedScreen(navController: NavController) {
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(0.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
@@ -929,8 +945,9 @@ fun ReportSubmittedScreen(navController: NavController) {
             verticalArrangement = Arrangement.Center
         ) {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(8.dp),
-                shape = RoundedCornerShape(0.dp),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.White)
             ) {
                 Column(
@@ -952,7 +969,7 @@ fun ReportSubmittedScreen(navController: NavController) {
                         onClick = { navController.navigate("home") { popUpTo("home") { inclusive = true } } },
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = GovColors.NavyBlue, contentColor = GovColors.White),
-                        shape = RoundedCornerShape(0.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("Return to Home", fontWeight = FontWeight.Bold)
                     }
@@ -962,7 +979,7 @@ fun ReportSubmittedScreen(navController: NavController) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MyReportsScreen(navController: NavController) {
     var reportsList by remember { mutableStateOf<List<Report>>(emptyList()) }
@@ -973,20 +990,25 @@ fun MyReportsScreen(navController: NavController) {
     LaunchedEffect(key1 = auth.currentUser) {
         val user = auth.currentUser
         if (user != null) {
-            db.collection("reports")
-                .whereEqualTo("userId", user.uid)
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .get()
-                .addOnSuccessListener { result ->
-                    reportsList = result.documents.mapNotNull { doc ->
-                        doc.toObject<Report>()?.copy(id = doc.id)
+            try {
+                db.collection("reports")
+                    .whereEqualTo("userId", user.uid)
+                    .orderBy("timestamp", Query.Direction.DESCENDING)
+                    .get()
+                    .addOnSuccessListener { result ->
+                        reportsList = result.documents.mapNotNull { doc ->
+                            doc.toObject<Report>()?.copy(id = doc.id)
+                        }
+                        isLoading = false
                     }
-                    isLoading = false
-                }
-                .addOnFailureListener { exception ->
-                    Log.e("MyReportsScreen", "Firestore failure: ", exception)
-                    isLoading = false
-                }
+                    .addOnFailureListener { exception ->
+                        Log.e("MyReportsScreen", "Firestore failure: ", exception)
+                        isLoading = false
+                    }
+            } catch (e: Exception) {
+                Log.e("MyReportsScreen", "Error fetching reports", e)
+                isLoading = false
+            }
         } else {
             isLoading = false
         }
@@ -995,8 +1017,9 @@ fun MyReportsScreen(navController: NavController) {
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(0.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
@@ -1018,8 +1041,16 @@ fun MyReportsScreen(navController: NavController) {
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(reportsList) { report ->
-                        ReportItem(report) {
+                    items(reportsList, key = { it.id }) { report ->
+                        ReportItem(
+                            report = report,
+                            modifier = Modifier.animateItemPlacement(
+                                spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessLow
+                                )
+                            )
+                        ) {
                             navController.navigate("report_details/${report.id}")
                         }
                     }
@@ -1030,10 +1061,11 @@ fun MyReportsScreen(navController: NavController) {
 }
 
 @Composable
-fun ReportItem(report: Report, onClick: () -> Unit) {
+fun ReportItem(report: Report, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).shadow(4.dp),
-        shape = RoundedCornerShape(0.dp),
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(containerColor = GovColors.White)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
@@ -1064,7 +1096,7 @@ fun StatusChip(status: String) {
     }
     Card(
         colors = CardDefaults.cardColors(containerColor = backgroundColor),
-        shape = RoundedCornerShape(0.dp)
+        shape = RoundedCornerShape(8.dp)
     ) {
         Text(status, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
@@ -1075,6 +1107,7 @@ fun StatusChip(status: String) {
 fun ReportDetailsScreen(navController: NavController, reportId: String?) {
     var report by remember { mutableStateOf<Report?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var showFullScreenImage by remember { mutableStateOf(false) }
 
     LaunchedEffect(key1 = reportId) {
         if (reportId == null) {
@@ -1082,24 +1115,30 @@ fun ReportDetailsScreen(navController: NavController, reportId: String?) {
             return@LaunchedEffect
         }
         val db = FirebaseFirestore.getInstance()
-        db.collection("reports").document(reportId)
-            .get()
-            .addOnSuccessListener { document ->
-                if (document != null && document.exists()) {
-                    report = document.toObject<Report>()?.copy(id = document.id)
+        try {
+            db.collection("reports").document(reportId)
+                .get()
+                .addOnSuccessListener { document ->
+                    if (document != null && document.exists()) {
+                        report = document.toObject<Report>()?.copy(id = document.id)
+                    }
+                    isLoading = false
                 }
-                isLoading = false
-            }
-            .addOnFailureListener {
-                isLoading = false
-            }
+                .addOnFailureListener {
+                    isLoading = false
+                }
+        } catch (e: Exception) {
+            Log.e("ReportDetails", "Error fetching report", e)
+            isLoading = false
+        }
     }
 
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(0.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
@@ -1115,13 +1154,18 @@ fun ReportDetailsScreen(navController: NavController, reportId: String?) {
         }
     ) { padding ->
         Box(
-            modifier = Modifier.fillMaxSize().background(GovColors.LightGray).padding(padding)
+            modifier = Modifier
+                .fillMaxSize()
+                .background(GovColors.LightGray)
+                .padding(padding)
         ) {
             if (isLoading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             } else if (report != null) {
                 Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState())
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow))
                 ) {
                     val bitmap = remember(report!!.imageData) {
                         if (report!!.imageData.isNotBlank()) {
@@ -1137,11 +1181,38 @@ fun ReportDetailsScreen(navController: NavController, reportId: String?) {
                         }
                     }
 
+                    if (showFullScreenImage && bitmap != null) {
+                        Dialog(onDismissRequest = { showFullScreenImage = false }) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Full Screen Report Image",
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(16.dp)),
+                                    contentScale = ContentScale.Fit
+                                )
+                                IconButton(
+                                    onClick = { showFullScreenImage = false },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(8.dp)
+                                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                ) {
+                                    Icon(Icons.Default.Close, "Close", tint = Color.White)
+                                }
+                            }
+                        }
+                    }
+
                     if (bitmap != null) {
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = "Report Image",
-                            modifier = Modifier.fillMaxWidth().height(250.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(250.dp)
+                                .clickable { showFullScreenImage = true },
                             contentScale = ContentScale.Crop
                         )
                     } else {
@@ -1155,26 +1226,31 @@ fun ReportDetailsScreen(navController: NavController, reportId: String?) {
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         Card(
-                            modifier = Modifier.fillMaxWidth().shadow(4.dp),
-                            shape = RoundedCornerShape(0.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                             colors = CardDefaults.cardColors(containerColor = GovColors.White)
                         ) {
                             Column(modifier = Modifier.padding(20.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.Top
                                 ) {
-                                    Text("Report #${report!!.id}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(report!!.location, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Report #${report!!.id}", style = MaterialTheme.typography.bodyMedium, color = GovColors.DarkGray)
+                                    }
                                     StatusChip(report!!.status)
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(report!!.location, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                             }
                         }
 
                         Card(
-                            modifier = Modifier.fillMaxWidth().shadow(4.dp),
-                            shape = RoundedCornerShape(0.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                             colors = CardDefaults.cardColors(containerColor = GovColors.White)
                         ) {
                             Column(modifier = Modifier.padding(20.dp)) {
@@ -1239,8 +1315,9 @@ fun ProfileScreen(navController: NavController) {
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(0.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
@@ -1305,7 +1382,7 @@ fun EmailVerificationScreen(onRefresh: () -> Unit, onSignOut: () -> Unit) {
         Button(
             onClick = onRefresh,
             modifier = Modifier.fillMaxWidth().height(48.dp),
-            shape = RoundedCornerShape(0.dp)
+            shape = RoundedCornerShape(12.dp)
         ) {
             Icon(Icons.Default.Refresh, "Refresh")
             Spacer(modifier = Modifier.width(8.dp))
@@ -1329,7 +1406,7 @@ fun EmailVerificationScreen(onRefresh: () -> Unit, onSignOut: () -> Unit) {
             },
             enabled = !isSending,
             modifier = Modifier.fillMaxWidth().height(48.dp),
-            shape = RoundedCornerShape(0.dp),
+            shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, GovColors.NavyBlue)
         ) {
             if (isSending) {
@@ -1354,12 +1431,14 @@ fun LoggedInProfileContent(navController: NavController, onSignOut: () -> Unit) 
     val email = currentUser?.email ?: "No email provided"
 
     Column(
-        modifier = Modifier.fillMaxSize().background(GovColors.LightGray).verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(GovColors.LightGray).verticalScroll(rememberScrollState()).padding(16.dp)
+            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessLow)),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth().shadow(4.dp),
-            shape = RoundedCornerShape(0.dp),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
             colors = CardDefaults.cardColors(containerColor = GovColors.White)
         ) {
             Column(
@@ -1380,8 +1459,9 @@ fun LoggedInProfileContent(navController: NavController, onSignOut: () -> Unit) 
         }
 
         Card(
-            modifier = Modifier.fillMaxWidth().shadow(4.dp),
-            shape = RoundedCornerShape(0.dp),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
             colors = CardDefaults.cardColors(containerColor = GovColors.White)
         ) {
             Column {
@@ -1394,8 +1474,9 @@ fun LoggedInProfileContent(navController: NavController, onSignOut: () -> Unit) 
         }
 
         Card(
-            modifier = Modifier.fillMaxWidth().shadow(4.dp),
-            shape = RoundedCornerShape(0.dp),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
             colors = CardDefaults.cardColors(containerColor = GovColors.White)
         ) {
             Column {
@@ -1409,7 +1490,7 @@ fun LoggedInProfileContent(navController: NavController, onSignOut: () -> Unit) 
             onClick = onSignOut,
             modifier = Modifier.fillMaxWidth().height(48.dp).padding(top = 8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = GovColors.Error, contentColor = GovColors.White),
-            shape = RoundedCornerShape(0.dp)
+            shape = RoundedCornerShape(12.dp)
         ) {
             Icon(Icons.AutoMirrored.Filled.ExitToApp, "Sign Out")
             Spacer(modifier = Modifier.width(8.dp))
@@ -1445,8 +1526,9 @@ fun EditProfileScreen(navController: NavController) {
     Scaffold(
         topBar = {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(0.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.NavyBlue)
             ) {
                 TopAppBar(
@@ -1465,21 +1547,22 @@ fun EditProfileScreen(navController: NavController) {
             modifier = Modifier.fillMaxSize().background(GovColors.LightGray).padding(padding).padding(16.dp).verticalScroll(rememberScrollState())
         ) {
             Card(
-                modifier = Modifier.fillMaxWidth().shadow(4.dp),
-                shape = RoundedCornerShape(0.dp),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = GovColors.White)
             ) {
                 Column(modifier = Modifier.padding(24.dp)) {
                     Text("Update Your Details", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = GovColors.NavyBlue)
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    OutlinedTextField(value = displayName, onValueChange = { displayName = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(0.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), singleLine = true)
+                    OutlinedTextField(value = displayName, onValueChange = { displayName = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), singleLine = true)
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    OutlinedTextField(value = user?.email ?: "", onValueChange = { /* Email is read-only */ }, label = { Text("Verified Email Address") }, modifier = Modifier.fillMaxWidth(), readOnly = true, shape = RoundedCornerShape(0.dp), colors = OutlinedTextFieldDefaults.colors(disabledTextColor = GovColors.DarkGray, disabledBorderColor = GovColors.DarkGray.copy(alpha = 0.3f), disabledLabelColor = GovColors.DarkGray.copy(alpha = 0.7f)))
+                    OutlinedTextField(value = user?.email ?: "", onValueChange = { /* Email is read-only */ }, label = { Text("Verified Email Address") }, modifier = Modifier.fillMaxWidth(), readOnly = true, shape = RoundedCornerShape(12.dp), colors = OutlinedTextFieldDefaults.colors(disabledTextColor = GovColors.DarkGray, disabledBorderColor = GovColors.DarkGray.copy(alpha = 0.3f), disabledLabelColor = GovColors.DarkGray.copy(alpha = 0.7f)))
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    OutlinedTextField(value = phoneNumber, onValueChange = { phoneNumber = it }, label = { Text("Phone Number (Optional)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(0.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+                    OutlinedTextField(value = phoneNumber, onValueChange = { phoneNumber = it }, label = { Text("Phone Number (Optional)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
                     Spacer(modifier = Modifier.height(24.dp))
                     Button(
                         onClick = {
@@ -1502,7 +1585,7 @@ fun EditProfileScreen(navController: NavController) {
                         enabled = !isLoading,
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = GovColors.Success, contentColor = GovColors.White),
-                        shape = RoundedCornerShape(0.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         if (isLoading) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), color = GovColors.White)
